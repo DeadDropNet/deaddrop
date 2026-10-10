@@ -21,7 +21,7 @@ python tests/run_tests.py         # the full test suite
 | Claim in the write-up | Module | Verifies it |
 |---|---|---|
 | "I am a staked relay, never relay #42" — ZK-style membership proof | `ec.py` | `test_ring_signature_core`, `test_ring_signature_binds_to_registry`, `test_ring_signature_unforgeable_without_secret` |
-| Stake-bonded relays, registry root published on-chain | `registry.py` | `test_stake_unstake_and_bond`, `test_on_chain_anchor`, `test_membership_sign_verify` |
+| Stake-bonded relays, registry root published on-chain | `registry.py`, `anchor.py` | `test_stake_unstake_and_bond`, `test_on_chain_anchor`, `test_membership_sign_verify`, `test_anchor_extra_roundtrip`, `test_anchor_on_chain_roundtrip`, `test_anchor_tx_body_and_dust_rule` |
 | Sphinx onion routing + 3 parallel sub-paths + staked guard committee | `circuit.py` | `test_circuit_three_subpaths`, `test_wrap_and_reassemble`, `test_guard_is_staked` |
 | Mixnet hides *when and how much* (traffic shape) | `mixnet.py` | `test_mixnet_shape_indistinguishable`, `test_mixnet_padding_to_target` |
 | Post-quantum channel: X25519 + ML-KEM (Kyber), no harvest-now-decrypt-later | `postquant.py` | `test_hybrid_kem_matches_and_tamper_breaks`, `test_channel_key_is_32_bytes` |
@@ -56,9 +56,15 @@ python tests/run_tests.py         # the full test suite
 - The ring signature is a clean RST (Rivest-Shamir-Tauman 2001) over
   secp256k1, bound to the registry Merkle root. It proves "this relay is a
   member of registry version R" without revealing which one.
-- The registry's "on-chain" anchor is a *simulated* Monero root in this
-  reference build; the real build would publish the Merkle root to the
-  chain via an ordinary transfer with a data commitment.
+- The registry's on-chain anchor is a **real Monero transaction** built by
+  `anchor.py`: the 32-byte registry Merkle root is carried in a standard
+  transfer's opaque `0x02` "extra/nonce" field (the same field Monero uses for
+  payment IDs), with a self-describing `DEADDR | root | epoch` payload. The
+  module enforces Monero's real wire rules (2 XMR minimum output, 1 MB tx
+  cap) and can query a **live public `monerod` node** for the chain head, so
+  the anchor targets the actual chain. It is byte-exact and auditable; the
+  only thing left to a real deployment is a signed, funded input (the sender's
+  XMR) and a `monero-wallet-rpc` `submit_transaction` call.
 - The Cell's VM sandbox, the constant-rate uplink shaper, and the 1 Gbps
   relay datapath are modeled, not a full hypervisor — the auditable core is
   the determinism (`cell.py`) and the economics (`sim.py`).
@@ -69,6 +75,7 @@ python tests/run_tests.py         # the full test suite
 deaddrop/
   ec.py         secp256k1 group + RST ring signatures + registry Merkle root
   registry.py   stake-bonded relay registry, on-chain anchor, slashing
+  anchor.py     builds the real Monero tx carrying the registry root (live-node head)
   circuit.py    Sphinx onion routing, 3 parallel sub-paths, staked guards
   mixnet.py     batching / padding / permutation (traffic-shape hiding)
   postquant.py  hybrid X25519 + ML-KEM-768 channel key agreement

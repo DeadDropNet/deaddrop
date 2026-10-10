@@ -7,6 +7,8 @@ exact thing being claimed:
   ec.py         secp256k1 group + Rivest-Shamir-Tauman ring signatures
                 (the "I am a staked relay, never relay #42" primitive)
   registry.py   stake-bonded Merkle relay registry, published on-chain
+  anchor.py     the real Monero transaction that carries the registry root,
+                with a live public-node client for the chain head
   circuit.py    Sphinx onion routing with 3 parallel sub-paths + guard committee
   mixnet.py     batching / padding / mixing that hides traffic SHAPE
   postquant.py  hybrid X25519 + ML-KEM (Kyber) channel key agreement

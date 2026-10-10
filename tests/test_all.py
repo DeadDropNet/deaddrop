@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from deaddrop import ec, registry as reg_mod, circuit as circ, mixnet as mix
 from deaddrop import postquant as pq, cell as cell_mod, store as store_mod, sim as sim_mod
+from deaddrop import anchor as anchor_mod
 
 
 # ---- ec.py : ring signatures + registry anchor ---------------------------
@@ -85,6 +86,70 @@ def test_on_chain_anchor():
     reg.publish_to_chain(height=100)
     assert reg.is_anchored(100)
     assert not reg.is_anchored(99)
+
+def test_anchor_extra_roundtrip():
+    """The registry root is carried in real Monero tx-extra bytes (0x02 nonce)."""
+    root = bytes(range(32))
+    extra = anchor_mod.build_extra(root, epoch=7)
+    # byte-exact layout: tag 0x02 | varint length 39 | "DEADDR" | root | epoch
+    assert extra[:1] == bytes([0x02])
+    assert extra[1:2] == bytes([anchor_mod.PAYLOAD_LEN])
+    assert extra[2:8] == anchor_mod.MAGIC
+    assert extra[8:40] == root
+    assert extra[40] == 7
+    assert len(extra) == 41
+    rec = anchor_mod.extract_anchor(extra)
+    assert rec == {"root": root, "epoch": 7}
+    assert anchor_mod.verify_extra(extra, root=root, epoch=7) is not None
+    assert anchor_mod.verify_extra(extra, root=bytes(32)) is None      # wrong root
+    assert anchor_mod.verify_extra(extra, epoch=6) is None            # wrong epoch
+    # malformed / truncated extras must not crash, just return None
+    for bad in (b"", extra[:10], b"\x00" * 40, b"\x02\xff\xff\xff"):
+        assert anchor_mod.extract_anchor(bad) is None
+
+def test_anchor_on_chain_roundtrip():
+    """The registry root lands on the chain and is recoverable from raw bytes."""
+    reg = reg_mod.Registry()
+    for i in range(4):
+        reg.stake(reg_mod.Relay(bond_xmr=100.0, region=f"r{i % 2}"))
+    chain = anchor_mod.SimulatedMoneroChain(genesis_height=100)
+    root1 = reg.merkle_root()
+    h1 = chain.publish_root(root1, epoch=reg.epoch,
+                            amount=anchor_mod.MIN_OUTPUT, to_key=bytes(32))
+    blk = chain.verify_root(root1)
+    assert blk is not None and blk["height"] == h1
+    # a raw extra scan of the stored block finds the exact root + epoch
+    rec = anchor_mod.extract_anchor(chain.blocks[h1]["extra"])
+    assert rec["root"] == root1 and rec["epoch"] == reg.epoch
+    # registry state moves (a bond changes) -> the OLD root is no longer on-chain
+    reg.relays[2].bond_xmr = 101.0
+    root2 = reg.merkle_root()
+    assert root2 != root1
+    assert chain.verify_root(root2) is None
+    assert chain.verify_root(root1) is not None
+    # and publishing the NEW root lands at a fresh height
+    h2 = chain.publish_root(root2, epoch=reg.epoch,
+                            amount=anchor_mod.MIN_OUTPUT, to_key=bytes(32))
+    assert h2 > h1 and chain.verify_root(root2, epoch=reg.epoch)["height"] == h2
+
+def test_anchor_tx_body_and_dust_rule():
+    """The publish tx is well-formed, and sub-2-XMR outputs are refused."""
+    reg = reg_mod.Registry()
+    reg.stake(reg_mod.Relay(bond_xmr=100.0))
+    tx = anchor_mod.publish_root(
+        reg.merkle_root(), to_key=b"\x11" * 32,
+        amount=anchor_mod.MIN_OUTPUT, epoch=1)
+    body = bytes.fromhex(tx["tx_hex"])
+    assert body[:8] == (2).to_bytes(8, "little")          # tx version 2
+    assert tx["root"] == reg.merkle_root().hex()
+    assert tx["size"] <= anchor_mod.MAX_TX_SIZE
+    assert anchor_mod.extract_anchor(tx["extra"]) is not None
+    # dust rule: an output below 2 XMR is not a valid Monero output
+    try:
+        anchor_mod.publish_root(reg.merkle_root(), to_key=b"\x11" * 32, amount=1_000_000)
+        assert False, "expected dust rejection"
+    except ValueError:
+        pass
 
 def test_membership_sign_verify():
     reg = reg_mod.Registry()

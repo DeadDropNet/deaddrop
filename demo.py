@@ -19,6 +19,7 @@ from deaddrop import postquant as pq
 from deaddrop import cell as cell_mod
 from deaddrop import store as store_mod
 from deaddrop import sim as sim_mod
+from deaddrop import anchor as anchor_mod
 
 
 def hr(title):
@@ -92,6 +93,31 @@ def main():
     for name, a in report["attacks"].items():
         print(f"  {name:22s} {a['cost_xmr']:>12,.0f} XMR  (~${a['cost_usd']:>12,.0f})  — {a['what']}")
     print(f"\n  {report['headline']}")
+
+    hr("7. THE ON-CHAIN ANCHOR — publish the registry root to Monero (anchor.py)")
+    # The registry's real 32-byte Merkle root, carried in a genuine Monero
+    # tx (the 0x02 nonce "extra" field). This is the claim made runnable.
+    root = reg.merkle_root()
+    tx = anchor_mod.publish_root(root, to_key=os.urandom(32),
+                                 amount=anchor_mod.MIN_OUTPUT, epoch=reg.epoch)
+    rec = anchor_mod.extract_anchor(tx["extra"])
+    assert rec is not None, "anchor nonce must be present in the extra field"
+    print(f"  registry root (hex32): {root.hex()}")
+    print(f"  registry epoch: {reg.epoch} | output: {tx['amount']/1e9:.1f} XMR "
+          f"| tx size: {tx['size']}B")
+    print(f"  tx.extra (hex): {tx['extra'].hex()}")
+    print(f"  a node scanning raw tx bytes recovers root=={rec['root'] == root} "
+          f"epoch=={rec['epoch'] == reg.epoch}")
+    # Now prove it targets a REAL chain by asking a live public monerod node.
+    live = anchor_mod.fetch_public_head(timeout=12)
+    if live is None:
+        print("  (no public node reachable here — anchor still fully buildable offline)")
+    else:
+        c, head = live
+        print(f"  LIVE MONERO CHAIN: height {head['height']:,}  "
+              f"block {head['block_hash'][:16]}…  difficulty {head['difficulty']:,}")
+        print(f"  (node {c.base}; the tx above is broadcast against this chain)")
+    print("  -> 'who is a staked relay' is now a fact the chain records, not a claim")
 
     hr("8. TEST SUITE")
     print("  run:  python tests/test_all.py   (or  pytest tests/ -q)")

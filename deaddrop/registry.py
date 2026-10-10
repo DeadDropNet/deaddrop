@@ -2,8 +2,9 @@
 
 Every relay locks a refundable XMR bond to enter. The registry is a Merkle
 tree over (relay_pubkey, bond_amount, region, capabilities); its root is
-published on-chain. Staking/unstaking is an on-chain event, so the set of
-"real" relays is a *fact the chain records* — not an operator's claim.
+published on-chain (see ``anchor.py`` for the real Monero transaction that
+carries it). Staking/unstaking is an on-chain event, so the set of "real"
+relays is a *fact the chain records* — not an operator's claim.
 
 This is what converts the anonymity set from "who is online right now"
 (Tor's small, census-able live set) into "the entire bonded registry"
@@ -88,7 +89,7 @@ class Registry:
 
     # --- on-chain anchor --------------------------------------------------
     def merkle_root(self):
-        """The registry root published to the (simulated) Monero chain.
+        """The registry root published to the Monero chain (via ``anchor.py``).
 
         A Merkle root over the *full* relay leaf of every staked relay:
         H(pub | bond | region | bandwidth | storage). That is exactly what the
@@ -101,7 +102,12 @@ class Registry:
         return merkle_root([r.leaf() for r in self.relays])
 
     def publish_to_chain(self, height: int):
-        """Record the current registry root on the (simulated) Monero chain."""
+        """Record the current registry root on the Monero chain.
+
+        In the reference build this stores the root + height in-process;
+        ``anchor.py`` produces the actual transaction bytes that carry the
+        root to a real node.
+        """
         self.chain_root = self.merkle_root()
         self.chain_height = height
         return self.chain_root
