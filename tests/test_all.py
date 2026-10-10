@@ -30,6 +30,34 @@ def test_ring_signature_binds_to_registry():
     pubs[5] = ec.KeyPair.random().pub
     assert ec.ring_verify(sig, pubs) is False
 
+def test_ring_signature_unforgeable_without_secret():
+    """Claim: 'you can't fake being a staked relay without paying XMR'.
+
+    The registry is public (its root is on-chain), so an outsider knows every
+    relay's public key. The ring signature must be impossible to forge from
+    public keys alone — closing the challenge circle requires holding a
+    relay's secret key. We brute-force a few hundred all-random attempts and
+    require NONE of them to verify.
+    """
+    import random
+    keys = [ec.KeyPair.random() for _ in range(6)]
+    pubs = [k.pub for k in keys]
+    root = ec.registry_root(pubs)
+    msg = b"outsider hop"
+    for _ in range(300):
+        s = [random.randrange(ec.ORDER) for _ in range(6)]
+        c0 = random.randrange(ec.ORDER)
+        V = [None] * 6
+        c = c0
+        for i in range(6):
+            V[i] = ec._add(ec._mul(s[i], ec.G), ec._mul(c, pubs[i]))
+            c = ec._challenge(msg, root, V[i])
+        forged = {"message": msg, "root": root, "n": 6, "c0": c0, "V": V, "s": s}
+        assert ec.ring_verify(forged, pubs) is False
+    # and a real signer DOES verify (the scheme isn't just rejecting everything)
+    sig = ec.ring_sign(msg, keys, signer_index=2)
+    assert ec.ring_verify(sig, pubs) is True
+
 def test_registry_root_stable_and_changes_on_stake():
     reg = reg_mod.Registry()
     for _ in range(5):
