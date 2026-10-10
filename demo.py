@@ -88,12 +88,6 @@ def main():
     res = s.censor_page(root, s.chunks[first]["holders"])
     print(f"  adversary captures all 16 -> censored={res['censored']}  (that cost: 16 x bond)")
 
-    hr("7. THE 'YOU MUST PAY XMR' PROOF — deanonymization costs (sim.py)")
-    report = sim_mod.full_report(reg, bond_xmr=100.0)
-    for name, a in report["attacks"].items():
-        print(f"  {name:22s} {a['cost_xmr']:>12,.0f} XMR  (~${a['cost_usd']:>12,.0f})  — {a['what']}")
-    print(f"\n  {report['headline']}")
-
     hr("7. THE ON-CHAIN ANCHOR — publish the registry root to Monero (anchor.py)")
     # The registry's real 32-byte Merkle root, carried in a genuine Monero
     # tx (the 0x02 nonce "extra" field). This is the claim made runnable.
@@ -119,7 +113,13 @@ def main():
         print(f"  (node {c.base}; the tx above is broadcast against this chain)")
     print("  -> 'who is a staked relay' is now a fact the chain records, not a claim")
 
-    hr("8. TEST SUITE")
+    hr("8. THE 'YOU MUST PAY XMR' PROOF — deanonymization costs (sim.py)")
+    report = sim_mod.full_report(reg, bond_xmr=100.0)
+    for name, a in report["attacks"].items():
+        print(f"  {name:22s} {a['cost_xmr']:>12,.0f} XMR  (~${a['cost_usd']:>12,.0f})  — {a['what']}")
+    print(f"\n  {report['headline']}")
+
+    hr("9. TEST SUITE")
     print("  run:  python tests/test_all.py   (or  pytest tests/ -q)")
     print("\n  Done. Every module above is the auditable core of the claim.")
 
