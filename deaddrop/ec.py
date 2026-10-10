@@ -192,22 +192,35 @@ def _pt_bytes(pt):
     return x.to_bytes(32, "big") + y.to_bytes(32, "big")
 
 
-def registry_root(points) -> bytes:
-    """Merkle root over a list of relay public points (SHA-256 pairwise).
+def merkle_root(leaves) -> bytes:
+    """Merkle root over a list of 32-byte leaf digests (SHA-256 pairwise).
 
-    This root is what gets published to the Monero chain. Anyone holding a
-    chain inclusion proof for the root can verify membership of any relay
-    and — crucially — the root is what binds a ring signature to a
-    specific registry version.
+    Odd-sized levels duplicate the last leaf so every level pairs up cleanly.
+    Returns 32 bytes. This is the generic pairwise-HASH tree used for both
+    the relay-registry root and the content-store root.
     """
-    leaves = [hashlib.sha256(_pt_bytes(p)).digest() for p in points]
-    level = leaves
+    if not leaves:
+        return b"\x00" * 32
+    level = list(leaves)
     while len(level) > 1:
         if len(level) % 2:
             level.append(level[-1])
         level = [hashlib.sha256(level[i] + level[i + 1]).digest()
                  for i in range(0, len(level) - 1, 2)]
     return level[0]
+
+
+def registry_root(points) -> bytes:
+    """Merkle root over relay public points (the anonymity-set root).
+
+    This is the root a ring signature binds to when it is produced over a
+    bare list of public points (e.g. in the unit tests). A full relay registry
+    uses the richer root in registry.Registry.merkle_root(), which also binds
+    each relay's bond, region, and capabilities — that is the value published
+    to the Monero chain. Both change whenever the relay set changes, which is
+    what pins a ring signature to a specific registry version.
+    """
+    return merkle_root([hashlib.sha256(_pt_bytes(p)).digest() for p in points])
 
 
 def _challenge(message: bytes, root: bytes, V) -> int:
@@ -283,15 +296,21 @@ def ring_sign(message: bytes, keys: list, signer_index: int, root: bytes = None)
             "c0": c[0], "V": V, "s": s}
 
 
-def ring_verify(sig: dict, public_points) -> bool:
+def ring_verify(sig: dict, public_points, root: bytes = None) -> bool:
     """Verify a ring signature against a registry of public points.
 
     Walks the challenge chain from the stored starting challenge c0 over
     indices 0..n-1, recomputing V_i = s_i*G + c_i*P_i at each position and the
     next challenge from it. Valid iff the chain closes back to c0 AND the
-    embedded registry root matches `public_points` — which also pins the ring
-    to the current registry version, so a replay against a different registry
-    fails.
+    root the signature was bound to matches the authoritative `root` — which
+    also pins the ring to the current registry version, so a replay against a
+    different registry fails.
+
+    `root` is the authoritative registry root to check against. When omitted
+    it defaults to the root over the given public points (the anonymity-set
+    root), which is correct for bare-point verification. The live registry
+    passes its FULL on-chain root (pub | bond | region | capabilities), so a
+    hop is tied to the exact anchored state — including the XMR bonds.
 
     Security:
       * wrong message -> every challenge changes -> the circle won't close.
@@ -309,15 +328,18 @@ def ring_verify(sig: dict, public_points) -> bool:
         return False
     # normalize to raw public points (accept KeyPair or (x, y))
     pubs = [p.pub if isinstance(p, KeyPair) else p for p in public_points]
-    if sig.get("root") != registry_root(pubs):
+    # the authoritative root to bind to: full registry root if provided, else
+    # the root over these exact public points
+    authoritative = registry_root(pubs) if root is None else root
+    if sig.get("root") != authoritative:
         return False
-    message, root = sig["message"], sig["root"]
+    message, root_used = sig["message"], sig["root"]
     c = sig["c0"]
     for i in range(n):
         expected = _add(_mul(s[i], G), _mul(c, pubs[i]))
         if not point_equal(V[i], expected):
             return False
-        c = _challenge(message, root, V[i])
+        c = _challenge(message, root_used, V[i])
     # the cycle must return to the emitted starting challenge
     return c == sig["c0"]
 

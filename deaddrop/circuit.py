@@ -149,10 +149,14 @@ class Circuit:
                 nonce = os.urandom(12)
                 inner = nonce + _aead(hkey, nonce, inner,
                                       aad=self.session + bytes([sp, hop]))
-            # membership proof (registry-bound ring signature) for this flow
+            # membership proof (registry-bound ring signature) for this flow.
+            # Bind to the registry's FULL on-chain root (pub | bond | region |
+            # capabilities) so the flow's hop proof is tied to the exact
+            # anchored state, matching what Registry.verify_hop re-checks.
             keys = [r.key for r in self.registry.relays]
             sig = ring_sign(packet_tag + bytes([sp]), keys,
-                            signer_index=path[0])
+                            signer_index=path[0],
+                            root=self.registry.merkle_root())
             onions.append({"subpath": sp, "path": path, "onion": inner,
                            "sig": sig})
         return onions

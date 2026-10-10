@@ -20,7 +20,7 @@ python tests/run_tests.py         # the full test suite
 
 | Claim in the write-up | Module | Verifies it |
 |---|---|---|
-| "I am a staked relay, never relay #42" — ZK-style membership proof | `ec.py` | `test_ring_signature_core`, `test_ring_signature_binds_to_registry` |
+| "I am a staked relay, never relay #42" — ZK-style membership proof | `ec.py` | `test_ring_signature_core`, `test_ring_signature_binds_to_registry`, `test_ring_signature_unforgeable_without_secret` |
 | Stake-bonded relays, registry root published on-chain | `registry.py` | `test_stake_unstake_and_bond`, `test_on_chain_anchor`, `test_membership_sign_verify` |
 | Sphinx onion routing + 3 parallel sub-paths + staked guard committee | `circuit.py` | `test_circuit_three_subpaths`, `test_wrap_and_reassemble`, `test_guard_is_staked` |
 | Mixnet hides *when and how much* (traffic shape) | `mixnet.py` | `test_mixnet_shape_indistinguishable`, `test_mixnet_padding_to_target` |

@@ -14,7 +14,7 @@ import hashlib
 import os
 import time
 
-from .ec import KeyPair, registry_root, ring_sign, ring_verify
+from .ec import KeyPair, merkle_root, ring_sign, ring_verify
 
 # 1 XMR = 1e6 XMR-dust units
 XMR_DUST = 1_000_000
@@ -44,13 +44,21 @@ class Relay:
         return int(self.bond_xmr * XMR_DUST)
 
     def leaf(self):
-        """Merkle leaf = H(pub | bond | region | cap)."""
+        """Merkle leaf = H(pub | bond | region | bandwidth | storage).
+
+        Everything the on-chain root promises to bind: the relay's public key,
+        its XMR bond, its region, and its advertised capabilities. Floats are
+        serialized deterministically (scaled to an integer) so the digest is
+        exact and platform-independent.
+        """
         h = hashlib.sha256()
         h.update(self.key.to_public_bytes())
-        h.update(self.bond_xmr.to_bytes(8, "big"))
+        # bond in XMR, scaled to 1e6 sub-units (1e-6 XMR precision)
+        h.update(int(round(self.bond_xmr * 1_000_000)).to_bytes(8, "big"))
         h.update(self.region.encode())
-        h.update(self.bandwidth_gbps.to_bytes(8, "big"))
-        h.update(self.storage_tb.to_bytes(8, "big"))
+        # bandwidth and storage scaled to 1e6 sub-units of their units
+        h.update(int(round(self.bandwidth_gbps * 1_000_000)).to_bytes(8, "big"))
+        h.update(int(round(self.storage_tb * 1_000_000)).to_bytes(8, "big"))
         return h.digest()
 
 
@@ -80,9 +88,17 @@ class Registry:
 
     # --- on-chain anchor --------------------------------------------------
     def merkle_root(self):
+        """The registry root published to the (simulated) Monero chain.
+
+        A Merkle root over the *full* relay leaf of every staked relay:
+        H(pub | bond | region | bandwidth | storage). That is exactly what the
+        write-up claims the on-chain anchor commits to — the relay set AND the
+        XMR bonds, so a stake, unstake, bond change, or region change moves
+        the root.
+        """
         if not self.relays:
             return b"\x00" * 32
-        return registry_root(self.points())
+        return merkle_root([r.leaf() for r in self.relays])
 
     def publish_to_chain(self, height: int):
         """Record the current registry root on the (simulated) Monero chain."""
@@ -96,13 +112,24 @@ class Registry:
 
     # --- membership proof / membership signing ---------------------------
     def membership_sign(self, idx: int, packet_tag: bytes):
-        """Ring-sign a packet hop as registry member `idx` (anon to observer)."""
+        """Ring-sign a packet hop as registry member `idx` (anon to observer).
+
+        The signature binds to the registry's FULL on-chain root (the Merkle
+        root over pub | bond | region | capabilities), so a valid hop proof is
+        tied to the exact registry state — including the XMR bonds — that is
+        currently anchored on-chain.
+        """
         keys = [r.key for r in self.relays]
-        return ring_sign(packet_tag, keys, signer_index=idx)
+        return ring_sign(packet_tag, keys, signer_index=idx,
+                         root=self.merkle_root())
 
     def verify_hop(self, sig: dict):
-        """Verify a packet hop is signed by SOME staked relay (anon)."""
-        return ring_verify(sig, self.points()) is True
+        """Verify a packet hop is signed by SOME staked relay (anon).
+
+        Rebinds against the current full registry root, so a hop signed for an
+        older registry version (different bond set) does not verify.
+        """
+        return ring_verify(sig, self.points(), root=self.merkle_root()) is True
 
     # --- economics --------------------------------------------------------
     def total_bond(self):
